@@ -1,0 +1,258 @@
+public class MCDlnaActivity extends MCBaseActivity implements OnHeaderRefreshListener, OnItemClickListener {
+    public static final int PLAY_TYPE_LOCAL = 1;
+    public static final int PLAY_TYPE_ONLINE = 2;
+    private int playType;
+    private String uri;
+    private int sectionid = 0;
+
+    private QuickAdapter<Device> adapter;
+    @Bind(R.id.listview_dlna)
+    MCPullToRefreshView mListView;
+    private List<Device> mDevices = new ArrayList<Device>();
+    @Bind(R.id.titleview)
+    MCCommonTitleView mTitle;
+    private int checkedPostion = 0;
+    /**
+     * 加载动画
+     */
+    @Bind(R.id.loading_layout)
+    RelativeLayout loading_layout;
+    @Bind(R.id.loading_img)
+    ImageView loading_iv;
+
+    @Override
+    public int setupLayout() {
+        return R.layout.activity_dlna;
+    }
+
+    @Override
+    public void initView() {
+        mTitle.setRightTextVisible(View.INVISIBLE);
+        mListView.setAllowFooterPull(false);
+    }
+
+    @Override
+    public void setupEvent() {
+        mTitle.setTitleClickListener(new MCCommonTitleView.DefaultClickListener() {
+            @Override
+            public void onRightViewClick(View view) {
+                FrameLayout framelyt = ((FrameLayout) mListView.getChildAt(1));
+                ListView lv = (ListView) framelyt.getChildAt(0);
+                lv.getChildAt(checkedPostion).findViewById(R.id.img_dlan_checked).setVisibility(View.INVISIBLE);
+                mTitle.setRightTextVisible(View.INVISIBLE);
+                DLNA.getInstance().stop();
+            }
+
+            @Override
+            public void onLeftViewClick(View view) {
+                finish();
+            }
+        });
+
+        mListView.setOnHeaderRefreshListener(this);
+        mListView.setOnItemClickListener(this);
+    }
+
+    @Override
+    public void initData(Bundle savedInstanceState) {
+        if (getIntent() != null) {
+            Bundle extra = getIntent().getExtras();
+            playType = extra.getInt("media_type");
+            uri = extra.getString("media_url");
+            if (playType == PLAY_TYPE_LOCAL) {
+                sectionid = extra.getInt("media_sectionid");
+            }
+        }
+
+        adapter = new QuickAdapter<Device>(this, R.layout.list_item_dlna) {
+            @Override
+            protected void convert(BaseAdapterHelper helper, Device item) {
+                helper.setText(R.id.dlna_device_name, item.getFriendlyName());
+            }
+        };
+        mListView.setDataAdapter(adapter);
+
+        initDevice();
+    }
+
+    public void initDevice() {
+        DLNA.getInstance().init(getApplicationContext(), new DeviceChangeListener() {
+
+            @Override
+            public void deviceAdded(Device d) {
+
+                if (!DLNAUtil.isMediaRenderDevice(d))
+                    return;
+                int size = mDevices.size();
+                for (int i = 0; i < size; i++) {
+                    String udnString = mDevices.get(i).getUDN();
+                    if (d.getUDN().equalsIgnoreCase(udnString)) {
+                        mDevices.remove(i);
+                        mDevices.add(i, d);
+                        return;
+                    }
+                }
+
+                mDevices.add(d);
+                runOnUiThread(new Runnable() {
+
+                    @Override
+                    public void run() {
+                        adapter.clear();
+                        adapter.addAll(mDevices);
+                        adapter.notifyDataSetChanged();
+                        WidgetMangerUtils.setLoadingLayoutVisibility(MCDlnaActivity.this, false, loading_iv, loading_layout);
+                    }
+                });
+            }
+
+            @Override
+            public void deviceRemoved(Device d) {
+                if (!DLNAUtil.isMediaRenderDevice(d)) {
+                    return;
+                }
+                int size = mDevices.size();
+                for (int i = 0; i < size; i++) {
+                    String udnString = mDevices.get(i).getUDN();
+                    if (d.getUDN().equalsIgnoreCase(udnString)) {
+                        Device device = mDevices.remove(i);
+
+                        if (DLNA.getInstance().getSelectedDevice() != null
+                                && DLNA.getInstance().getSelectedDevice().getUDN().equalsIgnoreCase(device.getUDN())) {
+                            Toast.makeText(getApplicationContext(), getString(R.string.dlna_device_delete_tip),
+                                    Toast.LENGTH_SHORT).show();
+                        }
+                        runOnUiThread(new Runnable() {
+
+                            @Override
+                            public void run() {
+                                adapter.clear();
+                                adapter.addAll(mDevices);
+                                adapter.notifyDataSetChanged();
+                            }
+                        });
+
+                        break;
+                    }
+                }
+
+            }
+        });
+        if (mListView == null) return;
+        mListView.postDelayed(new Runnable() {
+
+            @Override
+            public void run() {
+                if (mDevices.size() <= 0) {
+                    WidgetMangerUtils.setLoadingLayoutVisibility(MCDlnaActivity.this, false, loading_iv, loading_layout);
+                    // 未找到
+                    MCGuidanceView mGuidanceView = new MCGuidanceView(MCDlnaActivity.this);
+                    mGuidanceView.setLayoutMarginTop(MCDlnaActivity.this.getResources().getDimensionPixelSize(
+                            R.dimen.dimen_70dp));
+                    mGuidanceView.setGuidanceBitmap(R.drawable.no_other_content);
+                    mGuidanceView.setGuidanceText(R.string.dlna_device_null);
+                    mListView.setGuidanceViewWhenNoData(mGuidanceView);
+                }
+            }
+        }, 1000 * 10);
+        WidgetMangerUtils.setLoadingLayoutVisibility(MCDlnaActivity.this, true, loading_iv, loading_layout);
+    }
+
+    @Override
+    public void onHeaderRefresh(MCPullToRefreshView view) {
+        initDevice();
+        mListView.onHeaderRefreshComplete();
+    }
+
+    @Override
+    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+        mTitle.setRightTextVisible(View.VISIBLE);
+
+        if (!(checkedPostion == 0 && position == 0)) {
+            parent.getChildAt(checkedPostion).findViewById(R.id.img_dlan_checked).setVisibility(View.INVISIBLE);
+        }
+        checkedPostion = position;
+        view.findViewById(R.id.img_dlan_checked).setVisibility(View.VISIBLE);
+        DLNA.getInstance().setSelectedDevice(adapter.getItem(position));
+        if (playType == PLAY_TYPE_LOCAL) {
+            DLNA.getInstance().playSDCardMedia(uri);
+        }
+        if (playType == PLAY_TYPE_ONLINE) {
+            DLNA.getInstance().playMedia(uri);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        DLNA.getInstance().search();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        DLNA.destroyDlan();
+    }
+}
+
+// activity layout
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:mooc="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent" >
+    <com.imooc.base.ui.view.MCCommonTitleView
+        android:id="@+id/titleview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/gray_one"
+        mooc:titleRightText="@string/dlna_device_disconnect"
+        mooc:titleRightTextColor="@color/bg_color_one"
+        mooc:titleLeftImage="@string/icon_arrow_back"
+        mooc:titleLeftText="@string/dlna_device_label"
+        mooc:titleLeftTextColor="@color/bg_color_one" >
+    </com.imooc.base.ui.view.MCCommonTitleView>
+    <cn.com.open.mooc.ui.commonview.MCPullToRefreshView
+        android:id="@+id/listview_dlna"
+        android:layout_below="@id/titleview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        mooc:hasVerticalScrollbars="true" />
+    <include layout="@layout/fragment_loading" />
+</RelativeLayout>
+
+// listview item
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/dimen_60dp"
+    android:paddingLeft="@dimen/dimen_20dp"
+    android:paddingRight="@dimen/dimen_20dp" >
+
+    <ImageView
+        android:id="@+id/img_dlan_checked"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentRight="true"
+        android:layout_centerVertical="true"
+        android:src="@drawable/img_dlna_checked"
+        android:visibility="invisible" />
+
+    <TextView
+        android:id="@+id/dlna_device_name"
+        style="@style/text_gray_one_size_four_style"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
+        android:paddingLeft="@dimen/dimen_10dp"
+        android:layout_toLeftOf="@id/img_dlan_checked"
+        android:ellipsize="end"
+        android:lines="1"
+        android:padding="@dimen/dimen_10dp" />
+
+    <View
+        style="@style/divider_line_1px"
+        android:layout_width="match_parent"
+        android:layout_alignParentBottom="true" />
+
+</RelativeLayout>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">DLNA</string>
+    <string name="action_settings">Settings</string>
+    <string name="dlna_device_delete_tip">DLNA 设备被抓走了</string>
+</resources>
